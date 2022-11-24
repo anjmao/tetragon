@@ -1,6 +1,8 @@
 # https://github.com/vectordotdev/helm-charts/blob/develop/charts/vector/values.yaml
 role: Aggregator
 
+terminationGracePeriodSeconds: 3
+
 customConfig:
   data_dir: /vector-data-dir
   api:
@@ -14,51 +16,45 @@ customConfig:
       address: 0.0.0.0:6000
       type: vector
       version: "2"
-  transforms:
-    events:
-      type: remap
-      inputs:
-        - vector
-      source: |-
-        . = parse_json!(string!(.message))
 
+  transforms:
     other_events:
       type: filter
       inputs:
-        - events
+        - vector
       condition:
         type: "vrl"
         source: |-
-          !exists(.process_kprobe.args[0].sock_arg)
+          !exists(.sport)
 
     network_events:
       type: filter
       inputs:
-        - events
+        - vector
       condition:
         type: "vrl"
         source: |-
-          exists(.process_kprobe.args[0].sock_arg)
+          exists(.sport)
 
-    remapped_network_events:
-      type: remap
+    network_events_metrics:
+      type: log_to_metric
       inputs:
         - network_events
-      source: |-
-        sock = .process_kprobe.args[0].sock_arg
-        bytes_len = .process_kprobe.args[1].int_arg
-        proc = .process_kprobe.process
-        .pid = proc.pid
-        .saddr = sock.saddr
-        .daddr = sock.daddr
-        .sport = sock.sport
-        .dport = sock.dport
-        .pod_name = proc.pod.name
-        .pod_namespace = proc.pod.namespace
-        .dest_pod_name = proc.dest_pod.name
-        .dest_pod_namespace = proc.dest_pod.namespace
-        .bytes = bytes_len
-        del(.process_kprobe)
+      metrics:
+        - type: counter
+          field: bytes
+          name: tetragon_network_flows
+          increment_by_value: true
+          tags:
+            saddr: '{{ "{{ saddr }}" }}'
+            daddr: '{{ "{{ daddr }}" }}'
+#            sport: '{{ "{{ sport }}" }}'
+#            dport: '{{ "{{ dport }}" }}'
+            pod_name: '{{ "{{ pod_name }}" }}'
+            pod_namespace: '{{ "{{ pod_namespace }}" }}'
+            dest_pod_name: '{{ "{{ dest_pod_name }}" }}'
+            dest_pod_namespace: '{{ "{{ dest_pod_namespace }}" }}'
+
   sinks:
       prom_exporter:
         type: prometheus_exporter
@@ -66,6 +62,16 @@ customConfig:
         address: 0.0.0.0:9090
       stdout:
         type: console
-        inputs: [ other_events, remapped_network_events ]
+        inputs:
+          - other_events
+          - network_events
         encoding:
           codec: json
+      victoria_metrics:
+        type: prometheus_remote_write
+        inputs:
+          - network_events_metrics
+        endpoint: http://metrics.vector.svc.cluster.local:8428/api/v1/write
+        default_namespace: tetragon
+        healthcheck:
+          enabled: true
