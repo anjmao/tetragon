@@ -15,20 +15,57 @@ customConfig:
       type: vector
       version: "2"
   transforms:
-    tetragon_transform:
+    events:
       type: remap
       inputs:
         - vector
       source: |-
-        . = parse_json!(.message)
-        del(.process_kprobe.parent)
+        . = parse_json!(string!(.message))
+
+    other_events:
+      type: filter
+      inputs:
+        - events
+      condition:
+        type: "vrl"
+        source: |-
+          !exists(.process_kprobe.args[0].sock_arg)
+
+    network_events:
+      type: filter
+      inputs:
+        - events
+      condition:
+        type: "vrl"
+        source: |-
+          exists(.process_kprobe.args[0].sock_arg)
+
+    remapped_network_events:
+      type: remap
+      inputs:
+        - network_events
+      source: |-
+        sock = .process_kprobe.args[0].sock_arg
+        bytes_len = .process_kprobe.args[1].int_arg
+        proc = .process_kprobe.process
+        .pid = proc.pid
+        .saddr = sock.saddr
+        .daddr = sock.daddr
+        .sport = sock.sport
+        .dport = sock.dport
+        .pod_name = proc.pod.name
+        .pod_namespace = proc.pod.namespace
+        .dest_pod_name = proc.dest_pod.name
+        .dest_pod_namespace = proc.dest_pod.namespace
+        .bytes = bytes_len
+        del(.process_kprobe)
   sinks:
-    prom_exporter:
-      type: prometheus_exporter
-      inputs: [ internal_metrics ]
-      address: 0.0.0.0:9090
-    stdout:
-      type: console
-      inputs: [ tetragon_transform ]
-      encoding:
-        codec: json
+      prom_exporter:
+        type: prometheus_exporter
+        inputs: [ internal_metrics ]
+        address: 0.0.0.0:9090
+      stdout:
+        type: console
+        inputs: [ other_events, remapped_network_events ]
+        encoding:
+          codec: json
