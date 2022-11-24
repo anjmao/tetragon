@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+  namespace: kube-system
+data:
+  vector-config.yaml: |
+    sources:
+      tetragon_logs:
+        type: file
+        ignore_older_secs: 600
+        include:
+          - /var/run/cilium/tetragon/tetragon.log
+        read_from: end
+    transforms:
+      tetragon_transform:
+        type: remap
+        inputs:
+          - tetragon_logs
+        source: |-
+          . = parse_json!(.message)
+          del(.process_kprobe.parent)
+    sinks:
+      vector_aggregator:
+        type: vector
+        inputs:
+          - tetragon_transform
+        address: vector.vector:6000

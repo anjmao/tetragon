@@ -1,0 +1,34 @@
+# https://github.com/vectordotdev/helm-charts/blob/develop/charts/vector/values.yaml
+role: Aggregator
+
+customConfig:
+  data_dir: /vector-data-dir
+  api:
+    enabled: true
+    address: 127.0.0.1:8686
+    playground: false
+  sources:
+    internal_metrics:
+      type: internal_metrics
+    vector:
+      address: 0.0.0.0:6000
+      type: vector
+      version: "2"
+  transforms:
+    tetragon_transform:
+      type: remap
+      inputs:
+        - vector
+      source: |-
+        . = parse_json!(.message)
+        del(.process_kprobe.parent)
+  sinks:
+    prom_exporter:
+      type: prometheus_exporter
+      inputs: [ internal_metrics ]
+      address: 0.0.0.0:9090
+    stdout:
+      type: console
+      inputs: [ tetragon_transform ]
+      encoding:
+        codec: json
